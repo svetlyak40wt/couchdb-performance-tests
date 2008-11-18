@@ -1,9 +1,9 @@
 #!/usr/bin/env python
 
 import Queue
-from threading import Lock, Thread
+from threading import Lock, Thread, Event
 from sys import maxint, argv, exit
-from time import time
+from time import time, sleep
 from random import randint, choice
 from couchdb import Server
 
@@ -32,8 +32,10 @@ def main(bulk_size, up_to, num_threads):
     f.write('Bulk size: %s, num threads: %s' % (bulk_size, num_threads))
     f.close()
 
-    stats = []
+    stats_file = open(stats_file, 'w')
+
     stats_lock = Lock()
+    exit_event = Event()
 
     chunks = Queue.Queue()
 
@@ -43,9 +45,10 @@ def main(bulk_size, up_to, num_threads):
         s = Server('http://localhost:5984')
         db = s['test']
 
-        try:
-            while 1:
-                chunk = list(chunks.get_nowait())
+        while not exit_event.isSet():
+            try:
+                chunk = list(chunks.get(timeout=5))
+                chunks.task_done()
 
                 db.update(chunk)
 
@@ -54,24 +57,41 @@ def main(bulk_size, up_to, num_threads):
                     count += bulk_size
                     internal_counter += bulk_size
 
-                    if internal_counter >= up_to/1000:
-                        #== num_threads*bulk_size:
+                    if internal_counter >= max(num_threads*bulk_size, up_to/1000):
                         end = time()
-                        stats.append((count, internal_counter/float(end-timer)))
+
+                        stats_file.write('%s %s\n' % (count, internal_counter/float(end-timer)))
+                        stats_file.flush()
+
                         timer = end
                         internal_counter = 0
                         print '%.1f%%' % (float(count) / up_to * 100)
                 finally:
                     stats_lock.release()
 
-        except Queue.Empty:
-            pass
+            except Queue.Empty:
+                pass
 
-    def loop():
+            except Exception, e:
+                print 'Exception: %r' % (e,)
+                chunks.put(chunk)
+                sleep(1)
+
+    def data_generator():
         for chunk_num in xrange(up_to / bulk_size):
+            while chunks.qsize() > 100:
+                sleep(0.5)
             chunks.put((gen_document() for i in xrange(bulk_size)))
 
-        threads = [Thread(target=process_chunks) for i in xrange(num_threads)]
+        print 'Data generation done, waiting for workers.'
+        chunks.join()
+        print 'Signaling to exit.'
+        exit_event.set()
+
+    def loop():
+        threads = [Thread(target = process_chunks) for i in xrange(num_threads)]
+        threads.append(Thread(target = data_generator))
+
         for thread in threads:
             thread.start()
         for thread in threads:
@@ -84,13 +104,7 @@ def main(bulk_size, up_to, num_threads):
         print 'Exception caught: %r' % e
 
 
-    print 'Writing stats to the %r' % stats_file
-    f = open(stats_file, 'w')
-    try:
-        for stat in stats:
-            f.write('%s %s\n' % stat)
-    finally:
-        f.close()
+    stats_file.close()
 
 if __name__ == '__main__':
     if len(argv) != 4:

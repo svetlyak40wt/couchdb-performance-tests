@@ -1,11 +1,11 @@
 clean:
-	rm -f *.dat *.meta
+	rm -f *.dat *.meta *.log
 
 huge: clean
-	./couchdb_bulk_perf.py 10 10000000 1
-	./couchdb_bulk_perf.py 100 10000000 1
-	./couchdb_bulk_perf.py 1000 10000000 1
-	./couchdb_bulk_perf.py 10000 10000000 1
+	#./couchdb_bulk_perf.py 10 4000000 1 | tee huge-10-4000000.log
+	#./couchdb_bulk_perf.py 100 4000000 1 | tee huge-100-4000000.log
+	./couchdb_bulk_perf.py 1000 4000000 1
+	#./couchdb_bulk_perf.py 10000 4000000 1 | tee huge-10000-4000000.log
 	./gen_plot.sh huge.png
 
 bulk_size: clean
